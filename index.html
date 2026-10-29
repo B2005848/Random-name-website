@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Đập Muỗi – Gọi tên học sinh</title>
+<!-- Tải thư viện đọc Excel -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 *{box-sizing:border-box}
 body{margin:0;overflow:hidden;font-family:"Segoe UI",Roboto,Arial,sans-serif;background:#ffe27a;color:#3b2a20}
@@ -36,11 +38,13 @@ button,select{font:inherit;cursor:pointer}
 .card label{font-weight:700;display:block;margin:8px 0 4px}
 .card input[type=text],.card textarea,.card select{width:100%;border:2px solid #7a4b1e;border-radius:10px;padding:8px 10px;font:inherit;background:#fff}
 .card .row select{flex:1;width:auto}
-.card textarea{min-height:230px;resize:vertical}
+.card textarea{min-height:200px;resize:vertical}
 .card button{border:3px solid #7a4b1e;border-radius:12px;background:#fff;padding:7px 14px;font-weight:700}
 .card .ok{background:#4caf50;color:#fff}
 .card .play{background:#ff8a1f;color:#fff}
 .card small{color:#7a5a3a}
+.btn-import{background:#217346!important;color:#fff!important;font-size:13px!important;padding:5px 12px!important;border:3px solid #144c29!important;border-radius:10px;cursor:pointer;display:inline-flex;align-items:center}
+.btn-import:hover{background:#1e6b41!important}
 </style>
 </head>
 <body>
@@ -62,11 +66,19 @@ button,select{font:inherit;cursor:pointer}
   <h2>⚙️ Quản lý lớp học</h2>
   <div class="row"><select id="mSel"></select><button id="mAdd">➕ Thêm lớp</button><button id="mDel">🗑 Xóa lớp</button></div>
   <label for="mName">Tên lớp</label><input type="text" id="mName" placeholder="Ví dụ: Lớp 10A1">
-  <label for="mList">Danh sách học sinh</label>
+  
+  <div class="row" style="justify-content:space-between; align-items:flex-end; margin-top:12px; margin-bottom:4px;">
+    <label for="mList" style="margin:0;">Danh sách học sinh</label>
+    <label class="btn-import" for="mExcel">📗 Nhập từ Excel (.xlsx)
+      <input type="file" id="mExcel" accept=".xlsx, .xls, .csv" style="display:none;">
+    </label>
+  </div>
+  
   <textarea id="mList" placeholder="Mỗi dòng một tên, hoặc cách nhau bằng dấu phẩy"></textarea>
   <div class="row" style="margin-top:6px"><small id="mCount"></small><small>· Thay đổi được lưu tự động trên trình duyệt này.</small></div>
   <div class="row" style="justify-content:flex-end"><button id="mSave" class="ok">💾 Lưu lớp</button><button id="mPlay" class="play">▶ Lưu &amp; chơi lớp này</button><button id="mClose">✖ Đóng</button></div>
 </div></div>
+
 <script>
 const $=id=>document.getElementById(id),cv=$('cv'),ctx=cv.getContext('2d'),KEY='dapmuoi_v1';
 const FLY={slow:.5,mid:1,fast:1.9},WAIT={slow:2600,mid:1300,fast:500};
@@ -75,7 +87,7 @@ const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let D;
 function load(){try{D=JSON.parse(localStorage.getItem(KEY))}catch(e){}
- if(!D||!D.classes||!D.classes.length){const id=uid();D={active:id,fly:'mid',wait:'mid',noRep:true,sound:true,classes:[{id,name:'Lớp mẫu 10A1',students:['Nguyễn Văn A','Nguyễn Văn B','Trần Thị C','Lê Minh D','Phạm Thu E','Hoàng Gia F','Vũ Ngọc G','Đặng Quốc H','Bùi Thanh I','Ngô Bảo K']}]}}}
+ if(!D||!D.classes||!D.classes.length){const id=uid();D={active:id,fly:'mid',wait:'mid',noRep:true,sound:true,classes:[{id,name:'Lớp mẫu 10A1',students:['Nguyễn Văn A','Nguyễn Văn B','Trần Thị C','Lê Minh D','Phạm Thu E','Hoàng Gia F']}]}}}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(D))}catch(e){}};
 const cur=()=>D.classes.find(c=>c.id===D.active)||D.classes[0];
 
@@ -93,7 +105,7 @@ function toast(t){const e=$('msg');e.textContent=t;e.style.display='block';clear
 function hideWin(){$('win').style.display='none'}
 function showWin(n){$('wn').textContent=n;const w=$('win');w.style.display='flex';w.classList.remove('pop');void w.offsetWidth;w.classList.add('pop')}
 
-/* ---------- Hệ thống Âm thanh Synth (Web Audio API) ---------- */
+/* ---------- Hệ thống Âm thanh Synth ---------- */
 let ac, masterGain, bgmTimer, buzzOsc, buzzGain, buzzMod;
 let isAudioInit = false;
 
@@ -104,84 +116,44 @@ function initAudio(){
   masterGain = ac.createGain();
   masterGain.gain.value = D.sound !== false ? 1 : 0;
   masterGain.connect(ac.destination);
-  
-  // Tiếng muỗi bay (Buzz loop) - Nâng tần số, hạ âm lượng siêu nhỏ
-  buzzOsc = ac.createOscillator();
-  buzzMod = ac.createOscillator();
-  const modGain = ac.createGain();
-  buzzGain = ac.createGain();
-  
-  buzzOsc.type = 'sawtooth';
-  buzzOsc.frequency.value = 520; // Tần số cao vút giống tiếng muỗi
-  
-  buzzMod.type = 'sine';
-  buzzMod.frequency.value = 18;
+  buzzOsc = ac.createOscillator(); buzzMod = ac.createOscillator();
+  const modGain = ac.createGain(); buzzGain = ac.createGain();
+  buzzOsc.type = 'sawtooth'; buzzOsc.frequency.value = 520;
+  buzzMod.type = 'sine'; buzzMod.frequency.value = 18;
   modGain.gain.value = 40;
-  buzzMod.connect(modGain);
-  modGain.connect(buzzOsc.frequency);
-  
-  buzzGain.gain.value = 0; // Mặc định tắt
+  buzzMod.connect(modGain).connect(buzzOsc.frequency);
+  buzzGain.gain.value = 0;
   buzzOsc.connect(buzzGain).connect(masterGain);
-  
-  buzzOsc.start();
-  buzzMod.start();
-  
-  startBGM();
-  isAudioInit = true;
+  buzzOsc.start(); buzzMod.start();
+  startBGM(); isAudioInit = true;
  }catch(e){}
 }
-
-function ensureAudio(){
- if(!ac) initAudio();
- else if(ac.state==='suspended') ac.resume();
-}
-
+function ensureAudio(){ if(!ac) initAudio(); else if(ac.state==='suspended') ac.resume(); }
 function updateBuzzSound(){
  if(!ac || !buzzGain) return;
  const flyingCount = M.filter(m => m.state === 'fly').length;
- // Âm lượng muỗi vô cùng nhỏ: tối thiểu 0.001, tăng dần chút xíu nhưng không vượt quá 0.015
  const targetVol = (D.sound !== false && flyingCount > 0) ? Math.min(0.015, 0.001 + flyingCount * 0.001) : 0;
  buzzGain.gain.setTargetAtTime(targetVol, ac.currentTime, 0.1);
 }
 
-/* Nhạc nền vui nhộn (Game 8-bit nảy nảy) */
-const MELODY = [
- {n: 60, d: 0.2}, {n: 64, d: 0.2}, {n: 67, d: 0.2}, {n: 72, d: 0.4},
- {n: 69, d: 0.2}, {n: 65, d: 0.2}, {n: 60, d: 0.4},
- {n: 62, d: 0.2}, {n: 65, d: 0.2}, {n: 69, d: 0.2}, {n: 74, d: 0.4},
- {n: 72, d: 0.2}, {n: 67, d: 0.2}, {n: 62, d: 0.4}
-];
-
+const MELODY = [{n: 60, d: 0.2}, {n: 64, d: 0.2}, {n: 67, d: 0.2}, {n: 72, d: 0.4}, {n: 69, d: 0.2}, {n: 65, d: 0.2}, {n: 60, d: 0.4}, {n: 62, d: 0.2}, {n: 65, d: 0.2}, {n: 69, d: 0.2}, {n: 74, d: 0.4}, {n: 72, d: 0.2}, {n: 67, d: 0.2}, {n: 62, d: 0.4}];
 function mToF(m){ return 440 * Math.pow(2, (m - 69) / 12); }
-
 function startBGM(){
  let stepIdx = 0;
  function playNextNote(){
   if(D.sound !== false && ac && ac.state === 'running'){
    const note = MELODY[stepIdx % MELODY.length];
    if(note.n > 0){
-       const osc = ac.createOscillator();
-       const g = ac.createGain();
-       osc.type = 'square'; // Âm thanh kiểu game 8-bit tinh nghịch
-       osc.frequency.setValueAtTime(mToF(note.n), ac.currentTime);
-       
-       // Nhạc nền êm nhẹ (0.012)
-       g.gain.setValueAtTime(0.012, ac.currentTime);
-       g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + note.d * 0.85);
-       
-       osc.connect(g).connect(masterGain);
-       osc.start();
-       osc.stop(ac.currentTime + note.d);
+       const osc = ac.createOscillator(), g = ac.createGain();
+       osc.type = 'square'; osc.frequency.setValueAtTime(mToF(note.n), ac.currentTime);
+       g.gain.setValueAtTime(0.012, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + note.d * 0.85);
+       osc.connect(g).connect(masterGain); osc.start(); osc.stop(ac.currentTime + note.d);
    }
-   stepIdx++;
-   bgmTimer = setTimeout(playNextNote, note.d * 1000);
-  } else {
-   bgmTimer = setTimeout(playNextNote, 500);
-  }
+   stepIdx++; bgmTimer = setTimeout(playNextNote, note.d * 1000);
+  } else { bgmTimer = setTimeout(playNextNote, 500); }
  }
  playNextNote();
 }
-
 function tone(f1,f2,d,type,v,delay=0){
  if(D.sound === false || !ac) return;
  const o=ac.createOscillator(),g=ac.createGain(),t=ac.currentTime+delay;
@@ -190,7 +162,6 @@ function tone(f1,f2,d,type,v,delay=0){
  g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(.001,t+d);
  o.connect(g).connect(masterGain);o.start(t);o.stop(t+d);
 }
-
 function snd(k){
  try{
   if(D.sound === false || !ac) return;
@@ -260,7 +231,6 @@ function buildBg(){
  g.fillStyle='#a8683a';g.fillRect(0,floorY-14,W,14);g.fillStyle='#8a5326';g.fillRect(0,floorY-2,W,2);
  for(let y=floorY,i=0;y<H;i++){const h=30+(y-floorY)*.1;g.fillStyle=i%2?'#c58a50':'#d49a5f';g.fillRect(0,y,W,h);g.strokeStyle='#a36d3d';g.lineWidth=2;
   g.beginPath();g.moveTo(0,y);g.lineTo(W,y);for(let x=(i%2)*70;x<W;x+=140){g.moveTo(x,y);g.lineTo(x,y+h)}g.stroke();y+=h}
- // cửa sổ + nắng
  const k=Math.min(1,W/900),ww=150*k,wh=180*k,wx=Math.max(30,W*.08),wy=40;
  g.fillStyle='rgba(255,255,190,.2)';g.beginPath();g.moveTo(wx,wy+wh);g.lineTo(wx+ww,wy+wh);g.lineTo(wx+ww+280,floorY+170);g.lineTo(wx+280,floorY+170);g.fill();
  let sg=g.createLinearGradient(0,wy,0,wy+wh);sg.addColorStop(0,'#8fd3ff');sg.addColorStop(1,'#dff4ff');g.fillStyle=sg;g.fillRect(wx,wy,ww,wh);
@@ -268,23 +238,19 @@ function buildBg(){
  g.strokeStyle='#ffe14d';g.lineWidth=3;for(let i=0;i<12;i++){const a=i*Math.PI/6;g.beginPath();g.moveTo(wx+ww*.7+Math.cos(a)*28*k,wy+ww*.3+Math.sin(a)*28*k);g.lineTo(wx+ww*.7+Math.cos(a)*38*k,wy+ww*.3+Math.sin(a)*38*k);g.stroke()}
  g.strokeStyle='#8a5a2b';g.lineWidth=8;g.strokeRect(wx,wy,ww,wh);g.lineWidth=5;g.beginPath();g.moveTo(wx+ww/2,wy);g.lineTo(wx+ww/2,wy+wh);g.moveTo(wx,wy+wh/2);g.lineTo(wx+ww,wy+wh/2);g.stroke();
  g.fillStyle='#ff9fb8';g.fillRect(wx-22,wy-8,26,wh+30);g.fillRect(wx+ww-4,wy-8,26,wh+30);
- // đồng hồ
  const ox=W/2,oy=80,d=new Date(),mm=d.getMinutes(),hh=d.getHours()%12+mm/60;
  g.fillStyle='#fff';g.strokeStyle='#7a4b1e';g.lineWidth=6;g.beginPath();g.arc(ox,oy,38,0,7);g.fill();g.stroke();
  g.strokeStyle='#3b2a20';g.lineWidth=3;for(let i=0;i<12;i++){const a=i*Math.PI/6;g.beginPath();g.moveTo(ox+Math.cos(a)*30,oy+Math.sin(a)*30);g.lineTo(ox+Math.cos(a)*34,oy+Math.sin(a)*34);g.stroke()}
  g.lineCap='round';g.lineWidth=5;g.beginPath();g.moveTo(ox,oy);g.lineTo(ox+Math.cos(hh*Math.PI/6-Math.PI/2)*18,oy+Math.sin(hh*Math.PI/6-Math.PI/2)*18);g.stroke();
  g.lineWidth=3;g.beginPath();g.moveTo(ox,oy);g.lineTo(ox+Math.cos(mm*Math.PI/30-Math.PI/2)*27,oy+Math.sin(mm*Math.PI/30-Math.PI/2)*27);g.stroke();
- // tranh
  const px=Math.min(W*.74,W-250);
  g.fillStyle='#8a5a2b';g.fillRect(px,45,120,88);g.fillStyle='#bfe8ff';g.fillRect(px+8,53,104,72);
  g.fillStyle='#4caf50';g.beginPath();g.moveTo(px+8,125);g.lineTo(px+45,80);g.lineTo(px+75,125);g.fill();g.fillStyle='#2e8b57';g.beginPath();g.moveTo(px+50,125);g.lineTo(px+85,90);g.lineTo(px+112,125);g.fill();
  g.fillStyle='#ffe14d';g.beginPath();g.arc(px+95,70,9,0,7);g.fill();
  g.fillStyle='#8a5a2b';g.fillRect(px+135,60,70,92);g.fillStyle='#ffd1dc';g.fillRect(px+142,67,56,78);g.fillStyle='#e8333f';g.beginPath();g.arc(px+170,100,16,0,7);g.fill();g.fillStyle='#ffe14d';g.beginPath();g.arc(px+170,100,6,0,7);g.fill();
- // chậu cây
  const lx=Math.min(W*.92,W-40),ly=floorY+55;
  g.fillStyle='#4caf50';for(let i=-2;i<=2;i++){g.beginPath();g.ellipse(lx+i*14,ly-50-Math.abs(i)*-6,9,32,i*.3,0,7);g.fill()}
  g.fillStyle='#c2603a';g.beginPath();g.moveTo(lx-26,ly-24);g.lineTo(lx+26,ly-24);g.lineTo(lx+18,ly+16);g.lineTo(lx-18,ly+16);g.fill();
- // thảm
  g.fillStyle='#7bc4e8';g.strokeStyle='#fff';g.lineWidth=4;g.beginPath();g.ellipse(cx,baseY-2,150*U,24*U,0,0,7);g.fill();g.stroke();
 }
 function resize(){DPR=Math.min(2,devicePixelRatio||1);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;barH=$('bar').offsetHeight;cx=W/2;baseY=H-barH-14;U=Math.max(.6,Math.min(1.05,(baseY-80)/300));buildBg()}
@@ -366,9 +332,7 @@ let lt=performance.now();
 function loop(now){const dt=Math.min(.05,(now-lt)/1000);lt=now;step(now);upd(dt,now);draw(now);requestAnimationFrame(loop)}
 
 /* ---------- Điều khiển ---------- */
-function updateSndBtn(){
- $('bSnd').textContent = D.sound !== false ? '🔊 Âm thanh' : '🔇 Tắt âm';
-}
+function updateSndBtn(){ $('bSnd').textContent = D.sound !== false ? '🔊 Âm thanh' : '🔇 Tắt âm'; }
 function refreshSel(){const o=D.classes.map(c=>`<option value="${c.id}"${c.id===D.active?' selected':''}>${esc(c.name)} (${c.students.length})</option>`).join('');$('sel').innerHTML=o}
 function seg(id,key){const el=$(id);el.innerHTML='';OPT.forEach(([v,l])=>{const b=document.createElement('button');b.textContent=l;b.className=D[key]===v?'on':'';b.onclick=()=>{D[key]=v;save();seg(id,key)};el.appendChild(b)})}
 $('sel').onchange=e=>{D.active=e.target.value;save();resetGame()};
@@ -376,24 +340,19 @@ $('bGo').onclick=callNext;
 $('bNew').onclick=()=>{resetGame();toast('Đã làm mới danh sách muỗi!')};
 $('win').onclick=hideWin;
 $('cNo').onchange=e=>{D.noRep=e.target.checked;if(!D.noRep)M.forEach(m=>{if(m.state==='gone'){m.state='fly';m.al=1;place(m)}m.called=false});save();hud()};
-$('bSnd').onclick=()=>{
- ensureAudio();
- D.sound = !(D.sound !== false);
- if(masterGain) masterGain.gain.value = D.sound ? 1 : 0;
- updateSndBtn();
- save();
-};
+$('bSnd').onclick=()=>{ ensureAudio(); D.sound = !(D.sound !== false); if(masterGain) masterGain.gain.value = D.sound ? 1 : 0; updateSndBtn(); save(); };
 
 addEventListener('keydown',e=>{if(e.code==='Space'&&$('modal').style.display!=='flex'&&!/INPUT|TEXTAREA|SELECT|BUTTON/.test(e.target.tagName)){e.preventDefault();callNext()}});
 addEventListener('pointerdown', ensureAudio, {once: true});
 
-/* ---------- Quản lý lớp ---------- */
+/* ---------- Quản lý lớp & Nhập Excel ---------- */
 let ed;
 const parse=s=>s.split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean);
 const cnt=()=>$('mCount').textContent='Số học sinh: '+parse($('mList').value).length;
 function fillM(){const c=D.classes.find(x=>x.id===ed);$('mSel').innerHTML=D.classes.map(x=>`<option value="${x.id}"${x.id===ed?' selected':''}>${esc(x.name)}</option>`).join('');$('mName').value=c.name;$('mList').value=c.students.join('\n');cnt()}
 function saveForm(){const c=D.classes.find(x=>x.id===ed);if(!c)return;const n=$('mName').value.trim()||'Lớp chưa đặt tên',s=parse($('mList').value),ch=n!==c.name||s.join('|')!==c.students.join('|');
  c.name=n;c.students=s;save();refreshSel();if(ch&&ed===D.active)resetGame()}
+
 $('bMng').onclick=()=>{ed=D.active;fillM();$('modal').style.display='flex'};
 $('mList').oninput=cnt;
 $('mSel').onchange=e=>{saveForm();ed=e.target.value;fillM()};
@@ -404,6 +363,59 @@ $('mDel').onclick=()=>{const c=D.classes.find(x=>x.id===ed);if(!confirm('Xóa l�
 $('mSave').onclick=()=>{saveForm();fillM();toast('Đã lưu lớp ✔')};
 $('mPlay').onclick=()=>{saveForm();if(D.active!==ed){D.active=ed;save();refreshSel();resetGame()}$('modal').style.display='none'};
 $('mClose').onclick=()=>{saveForm();$('modal').style.display='none'};
+
+// Xử lý đọc file Excel
+$('mExcel').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  
+  if (typeof XLSX === 'undefined') {
+      toast('Lỗi: Cần có mạng để tải thư viện đọc Excel ở lần mở đầu tiên.');
+      this.value = ''; return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+      try {
+          const data = new Uint8Array(evt.target.result);
+          const workbook = XLSX.read(data, {type: 'array'});
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(firstSheet, {header: 1});
+          
+          let names = [];
+          rows.forEach(row => {
+              let cells = row.filter(c => c !== undefined && c !== null && String(c).trim() !== '');
+              if (cells.length === 0) return;
+              
+              let nameParts = [];
+              for(let c of cells) {
+                  let s = String(c).trim();
+                  if (/^\d+$/.test(s)) continue; // Bỏ qua số thứ tự
+                  if (/^(stt|họ tên|họ và tên|tên|ngày sinh|ghi chú|giới tính|nam|nữ|lớp|trường)$/i.test(s)) return; // Bỏ qua dòng tiêu đề
+                  if (s.length >= 2 && !/^\d{1,2}\/\d{1,2}/.test(s)) nameParts.push(s); // Lấy văn bản, bỏ qua định dạng ngày tháng
+              }
+              if (nameParts.length > 0) {
+                  let bestName = nameParts.sort((a,b) => b.length - a.length)[0]; // Chọn chuỗi văn bản dài nhất (thường là họ tên đầy đủ)
+                  if(bestName) names.push(bestName);
+              }
+          });
+          
+          if (names.length > 0) {
+              const currentVal = $('mList').value.trim();
+              $('mList').value = currentVal ? currentVal + '\n' + names.join('\n') : names.join('\n');
+              cnt(); saveForm();
+              toast(`Đã nhập thành công ${names.length} học sinh từ Excel!`);
+          } else {
+              toast('Không tìm thấy dữ liệu tên học sinh hợp lệ trong file.');
+          }
+      } catch(err) {
+          toast('Lỗi đọc file Excel! Hãy kiểm tra lại file.');
+          console.error(err);
+      }
+      $('mExcel').value = ''; // Reset input
+  };
+  reader.readAsArrayBuffer(file);
+});
 
 /* ---------- Khởi động ---------- */
 load();refreshSel();seg('sFly','fly');seg('sWait','wait');$('cNo').checked=D.noRep;updateSndBtn();
